@@ -15,6 +15,7 @@ from nanovllm.engine.model_runner import ModelRunner
 class LLMEngine:
 
     def __init__(self, model, **kwargs):
+        #  llm = LLM(path, enforce_eager=True, tensor_parallel_size=1)
         config_fields = {field.name for field in fields(Config)}
         config_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}
         config = Config(model, **config_kwargs)
@@ -46,12 +47,13 @@ class LLMEngine:
         self.scheduler.add(seq)
 
     def step(self):
-        seqs, is_prefill = self.scheduler.schedule()
-        token_ids = self.model_runner.call("run", seqs, is_prefill)
-        self.scheduler.postprocess(seqs, token_ids)
+        # 分配的kvcache的cpu元数据
+        seqs = self.scheduler.schedule()
+        token_ids, seq_need_compute_logits = self.model_runner.call("run", seqs)
+        self.scheduler.postprocess(seqs, token_ids, seq_need_compute_logits)
         outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]
-        num_tokens = sum(len(seq) for seq in seqs) if is_prefill else -len(seqs)
-        return outputs, num_tokens
+        num_total_tokens = sum(len(seq) for seq in seqs if seq.is_finished)
+        return outputs, num_total_tokens
 
     def is_finished(self):
         return self.scheduler.is_finished()
@@ -61,7 +63,7 @@ class LLMEngine:
         prompts: list[str] | list[list[int]],
         sampling_params: SamplingParams | list[SamplingParams],
         use_tqdm: bool = True,
-    ) -> list[str]:
+    ) :
         if use_tqdm:
             pbar = tqdm(total=len(prompts), desc="Generating", dynamic_ncols=True)
         if not isinstance(sampling_params, list):

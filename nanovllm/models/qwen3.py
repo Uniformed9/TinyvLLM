@@ -25,20 +25,24 @@ class Qwen3Attention(nn.Module):
         rope_theta: float = 10000,
         rope_scaling: tuple | None = None,
     ) -> None:
+        # 总的hidden_size是token向量的维度，这是要明确的所有num_heads就无所谓了
         super().__init__()
         tp_size = dist.get_world_size()
         self.total_num_heads = num_heads
         assert self.total_num_heads % tp_size == 0
         self.num_heads = self.total_num_heads // tp_size
+
         self.total_num_kv_heads = num_kv_heads
         assert self.total_num_kv_heads % tp_size == 0
         self.num_kv_heads = self.total_num_kv_heads // tp_size
+
         self.head_dim = head_dim or hidden_size // self.total_num_heads
+        # 单个gpu输出的特征维度
         self.q_size = self.num_heads * self.head_dim
         self.kv_size = self.num_kv_heads * self.head_dim
         self.scaling = self.head_dim ** -0.5
         self.qkv_bias = qkv_bias
-
+        # 一次性创造qkv矩阵
         self.qkv_proj = QKVParallelLinear(
             hidden_size,
             self.head_dim,
@@ -114,7 +118,7 @@ class Qwen3MLP(nn.Module):
         x = self.act_fn(gate_up)
         x = self.down_proj(x)
         return x
-
+    
 
 class Qwen3DecoderLayer(nn.Module):
 

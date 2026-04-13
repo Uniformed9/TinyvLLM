@@ -18,6 +18,10 @@ def store_kvcache_kernel(
     slot_mapping_ptr,
     D: tl.constexpr,
 ):
+    #某一层的kvcache_kernel(2, hf_config.num_hidden_layers, config.num_kvcache_blocks, self.block_size, num_kv_heads, head_dim)中的
+    #slot_mapping[0,1,2,3,0,1,0,1,2,3,4,5,6,7,8,9]
+    #[config.num_kvcache_blocks, self.block_size, num_kv_heads, head_dim]
+    
     idx = tl.program_id(0)
     slot = tl.load(slot_mapping_ptr + idx)
     if slot == -1: return
@@ -56,20 +60,33 @@ class Attention(nn.Module):
         self.num_kv_heads = num_kv_heads
         self.k_cache = self.v_cache = torch.tensor([])
 
+    # def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
+    #     context = get_context()
+    #     k_cache, v_cache = self.k_cache, self.v_cache
+    #     if k_cache.numel() and v_cache.numel():
+    #         store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
+    #     if context.is_prefill:
+    #         if context.block_tables is not None:    # prefix cache
+    #             k, v = k_cache, v_cache
+    #         o = flash_attn_varlen_func(q, k, v,
+    #                                    max_seqlen_q=context.max_seqlen_q, cu_seqlens_q=context.cu_seqlens_q,
+    #                                    max_seqlen_k=context.max_seqlen_k, cu_seqlens_k=context.cu_seqlens_k,
+    #                                    softmax_scale=self.scale, causal=True, block_table=context.block_tables)
+    #     else:    # decode
+    #         o = flash_attn_with_kvcache(q.unsqueeze(1), k_cache, v_cache,
+    #                                     cache_seqlens=context.context_lens, block_table=context.block_tables, 
+    #                                     softmax_scale=self.scale, causal=True)
+    #     return o
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
         context = get_context()
         k_cache, v_cache = self.k_cache, self.v_cache
         if k_cache.numel() and v_cache.numel():
             store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
-        if context.is_prefill:
-            if context.block_tables is not None:    # prefix cache
-                k, v = k_cache, v_cache
-            o = flash_attn_varlen_func(q, k, v,
-                                       max_seqlen_q=context.max_seqlen_q, cu_seqlens_q=context.cu_seqlens_q,
-                                       max_seqlen_k=context.max_seqlen_k, cu_seqlens_k=context.cu_seqlens_k,
-                                       softmax_scale=self.scale, causal=True, block_table=context.block_tables)
-        else:    # decode
-            o = flash_attn_with_kvcache(q.unsqueeze(1), k_cache, v_cache,
-                                        cache_seqlens=context.context_lens, block_table=context.block_tables, 
-                                        softmax_scale=self.scale, causal=True)
+
+        if context.block_tables is not None:    # prefix cache
+            k, v = k_cache, v_cache
+        o = flash_attn_varlen_func(q, k, v,
+                                    max_seqlen_q=context.max_seqlen_q, cu_seqlens_q=context.cu_seqlens_q,
+                                    max_seqlen_k=context.max_seqlen_k, cu_seqlens_k=context.cu_seqlens_k,
+                                    softmax_scale=self.scale, causal=True, block_table=context.block_tables)
         return o

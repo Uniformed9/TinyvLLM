@@ -53,10 +53,46 @@ class BlockManager:
         self.used_block_ids.remove(block_id)
         self.free_block_ids.append(block_id)
 
-    def can_allocate(self, seq: Sequence) -> bool:
-        return len(self.free_block_ids) >= seq.num_blocks
-
+    # def can_allocate(self, seq: Sequence) -> bool:
+    #     return len(self.free_block_ids) >= seq.num_blocks
+    def can_allocate(self, num_tokens) -> bool:
+        return len(self.free_block_ids) >= (num_tokens+self.block_size-1)//self.block_size
     def allocate(self, seq: Sequence):
+        # seq.num_cached_tokens已经更新了主要是
+        assert not seq.block_table
+        h = -1
+        num_new_tokens=seq.num_new_tokens
+        for i in range(seq.num_blocks):
+            cache_miss = False
+            token_ids = seq.block(i)
+            #h表示是否是完整的块，
+            h = self.compute_hash(token_ids, h) if len(token_ids) == self.block_size else -1
+            block_id = self.hash_to_block_id.get(h, -1)
+            if block_id == -1 or self.blocks[block_id].token_ids != token_ids:
+                cache_miss = True
+            if cache_miss:
+                #只分配seq.num_new_tokens个
+                if num_new_tokens<=0:
+                    break
+                num_new_tokens-=self.block_size
+                block_id = self.free_block_ids[0]
+                block = self._allocate_block(block_id)
+                
+            else:
+                seq.num_cached_tokens += self.block_size
+                if block_id in self.used_block_ids:
+                    block = self.blocks[block_id]
+                    block.ref_count += 1
+                else:
+                    block = self._allocate_block(block_id)
+            if h != -1:
+                block.update(h, token_ids)
+                self.hash_to_block_id[h] = block_id
+            seq.block_table.append(block_id)
+            
+    
+    def old_allocate(self, seq: Sequence):
+        
         assert not seq.block_table
         h = -1
         cache_miss = False
@@ -80,7 +116,32 @@ class BlockManager:
                 block.update(h, token_ids)
                 self.hash_to_block_id[h] = block_id
             seq.block_table.append(block_id)
-
+            
+    def get_token_layout(self, seq: Sequence):
+        """
+        Only for seq in the waiting queue.
+        """
+        assert not seq.block_table
+        num_new_tokens = 0
+        num_new_computed_tokens_in_used = 0
+        num_new_computed_tokens_in_free = 0
+        h = -1
+        cache_miss = False
+        for i in range(seq.num_blocks):
+            token_ids = seq.block(i)
+            h = self.compute_hash(token_ids, h) if len(token_ids) == self.block_size else -1
+            block_id = self.hash_to_block_id.get(h, -1)
+            if block_id == -1 or self.blocks[block_id].token_ids != token_ids or i == seq.num_blocks - 1:
+                cache_miss = True
+            if cache_miss:
+                num_new_tokens += len(token_ids)
+            else:
+                if block_id in self.used_block_ids:
+                    num_new_computed_tokens_in_used += len(token_ids)
+                else:
+                    num_new_computed_tokens_in_free += len(token_ids)
+        return num_new_computed_tokens_in_used, num_new_computed_tokens_in_free, num_new_tokens
+    
     def deallocate(self, seq: Sequence):
         for block_id in reversed(seq.block_table):
             block = self.blocks[block_id]
@@ -90,8 +151,18 @@ class BlockManager:
         seq.num_cached_tokens = 0
         seq.block_table.clear()
 
-    def can_append(self, seq: Sequence) -> bool:
-        return len(self.free_block_ids) >= (len(seq) % self.block_size == 1)
+    def can_append(self, seq: Sequence,num_new_tokens) -> bool:
+    
+        """
+        for running seqs
+        
+        """
+        capacity_tokens=self.block_size-seq.num_cached_tokens%self.block_size
+        if capacity_tokens==self.block_size:
+            capacity_tokens=0
+        if (num_new_tokens-capacity_tokens+self.block_size-1)//self.block_size<=len(self.free_block_ids):
+            return True
+        return False
 
     def may_append(self, seq: Sequence):
         block_table = seq.block_table

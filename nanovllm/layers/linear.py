@@ -22,6 +22,7 @@ class LinearBase(nn.Module):
         self.tp_dim = tp_dim
         self.tp_rank = dist.get_rank()
         self.tp_size = dist.get_world_size()
+        #因为后面的F.linear会转置
         self.weight = nn.Parameter(torch.empty(output_size, input_size))
         self.weight.weight_loader = self.weight_loader
         if bias:
@@ -52,7 +53,7 @@ class ReplicatedLinear(LinearBase):
 
 
 class ColumnParallelLinear(LinearBase):
-
+# output
     def __init__(
         self,
         input_size: int,
@@ -92,7 +93,6 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         loaded_weight = loaded_weight.chunk(self.tp_size, self.tp_dim)[self.tp_rank]
         param_data.copy_(loaded_weight)
 
-
 class QKVParallelLinear(ColumnParallelLinear):
 
     def __init__(
@@ -127,7 +127,7 @@ class QKVParallelLinear(ColumnParallelLinear):
         loaded_weight = loaded_weight.chunk(self.tp_size, self.tp_dim)[self.tp_rank]
         param_data.copy_(loaded_weight)
 
-
+#输入切分
 class RowParallelLinear(LinearBase):
 
     def __init__(
@@ -135,6 +135,7 @@ class RowParallelLinear(LinearBase):
         input_size: int,
         output_size: int,
         bias: bool = False,
+
     ):
         tp_size = dist.get_world_size()
         super().__init__(divide(input_size, tp_size), output_size, bias, 1)

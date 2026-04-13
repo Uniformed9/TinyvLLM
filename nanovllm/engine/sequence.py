@@ -22,12 +22,13 @@ class Sequence:
         self.last_token = token_ids[-1]
         self.num_tokens = len(self.token_ids)
         self.num_prompt_tokens = len(token_ids)
+        self.num_new_tokens=0
         self.num_cached_tokens = 0
         self.block_table = []
         self.temperature = sampling_params.temperature
         self.max_tokens = sampling_params.max_tokens
         self.ignore_eos = sampling_params.ignore_eos
-
+        
     def __len__(self):
         return self.num_tokens
 
@@ -37,7 +38,11 @@ class Sequence:
     @property
     def is_finished(self):
         return self.status == SequenceStatus.FINISHED
-
+    
+    @property
+    def num_context_tokens(self):
+        return self.num_cached_tokens + self.num_new_tokens
+    
     @property
     def num_completion_tokens(self):
         return self.num_tokens - self.num_prompt_tokens
